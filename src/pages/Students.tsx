@@ -1,5 +1,5 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { Search, Plus, Download, Eye, Pencil, ChevronLeft, ChevronRight, Users, Upload } from "lucide-react";
+import { Search, Plus, Download, Eye, Pencil, ChevronLeft, ChevronRight, Users, Upload, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { useStudents } from "@/hooks/useSupabaseData";
@@ -22,10 +22,10 @@ const Students = () => {
   const [selectedStudent, setSelectedStudent] = useState<typeof students[0] | null>(null);
 
   // -- NEW FUNCTIONALITY --
-  const [showForm, setShowForm] = useState<false | 'manual' | 'csv'>(false);
+  const [showForm, setShowForm] = useState<false | 'manual' | 'csv' | 'edit'>(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [formLoading, setFormLoading] = useState(false);
-  const [newStudent, setNewStudent] = useState({
+  const [studentForm, setStudentForm] = useState<{ id?: string, name: string, roll_number: string, academic_year: string, branch: string, phone: string }>({
     name: "",
     roll_number: "",
     academic_year: "1st Year",
@@ -91,30 +91,54 @@ const Students = () => {
     reader.readAsText(csvFile);
   };
 
-  const handleAddStudent = async (e: React.FormEvent) => {
+  const handleSaveStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canAddStudent) {
-      toast.error("You do not have permission to add students.");
+      toast.error("You do not have permission to modify students.");
       return;
     }
     setFormLoading(true);
-    const { error } = await supabase.from("students").insert({
-      name: newStudent.name,
-      roll_number: newStudent.roll_number,
-      academic_year: newStudent.academic_year,
-      branch: newStudent.branch,
-      phone: newStudent.phone,
-      is_active: true
-    });
+    let error;
+    if (studentForm.id) {
+      const res = await supabase.from("students").update({
+        name: studentForm.name,
+        roll_number: studentForm.roll_number,
+        academic_year: studentForm.academic_year,
+        branch: studentForm.branch,
+        phone: studentForm.phone,
+      }).eq("id", studentForm.id);
+      error = res.error;
+    } else {
+      const res = await supabase.from("students").insert({
+        name: studentForm.name,
+        roll_number: studentForm.roll_number,
+        academic_year: studentForm.academic_year,
+        branch: studentForm.branch,
+        phone: studentForm.phone,
+        is_active: true
+      });
+      error = res.error;
+    }
     setFormLoading(false);
     if (error) {
-      console.error("ADD STUDENT ERROR:", error);
-      toast.error(error.message || "Failed to add student. Roll number might already exist.");
+      console.error("SAVE STUDENT ERROR:", error);
+      toast.error(error.message || "Failed to save student. Roll number might already exist.");
     } else {
-      toast.success("Student added successfully!");
+      toast.success(`Student ${studentForm.id ? 'updated' : 'added'} successfully!`);
       setShowForm(false);
-      setNewStudent({ name: "", roll_number: "", academic_year: "1st Year", branch: "Computer Science", phone: "" });
+      setStudentForm({ name: "", roll_number: "", academic_year: "1st Year", branch: "Computer Science", phone: "" });
       qc.invalidateQueries({ queryKey: ["students"] });
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this student?")) return;
+    const { error } = await supabase.from("students").delete().eq("id", id);
+    if (error) toast.error(error.message);
+    else {
+      toast.success("Student deleted successfully");
+      qc.invalidateQueries({ queryKey: ["students"] });
+      if (selectedStudent?.id === id) setSelectedStudent(null);
     }
   };
   // -------------------------
@@ -151,7 +175,11 @@ const Students = () => {
             {canAddStudent && (
               <>
                 <button
-                  onClick={() => setShowForm(showForm === 'manual' ? false : 'manual')}
+                  onClick={() => {
+                    const willShow = showForm === 'manual' ? false : 'manual';
+                    setShowForm(willShow);
+                    if (willShow) setStudentForm({ name: "", roll_number: "", academic_year: "1st Year", branch: "Computer Science", phone: "" });
+                  }}
                   className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-opacity shadow-sm ${showForm === 'manual' ? 'bg-secondary text-foreground border' : 'bg-primary text-primary-foreground hover:opacity-90 shadow-red-500/20'}`}
                 >
                   <Plus className="h-4 w-4" /> {showForm === 'manual' ? "Cancel Manual" : "Add Manually"}
@@ -192,26 +220,26 @@ const Students = () => {
           </motion.div>
         )}
 
-        {showForm === 'manual' && (
+        {(showForm === 'manual' || showForm === 'edit') && (
           <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl bg-card border p-6 shadow-card">
-            <h3 className="text-sm font-semibold mb-4">Register New Student</h3>
-            <form onSubmit={handleAddStudent} className="space-y-4">
+            <h3 className="text-sm font-semibold mb-4">{showForm === 'edit' ? 'Edit Student' : 'Register New Student'}</h3>
+            <form onSubmit={handleSaveStudent} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <label className="text-xs font-semibold">Full Name</label>
-                  <input type="text" value={newStudent.name} onChange={e => setNewStudent({ ...newStudent, name: e.target.value })} placeholder="Student Name" className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" required />
+                  <input type="text" value={studentForm.name} onChange={e => setStudentForm({ ...studentForm, name: e.target.value })} placeholder="Student Name" className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" required />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold">Roll Number</label>
-                  <input type="text" value={newStudent.roll_number} onChange={e => setNewStudent({ ...newStudent, roll_number: e.target.value })} placeholder="e.g. 25371-CM-067" className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" required />
+                  <input type="text" value={studentForm.roll_number} onChange={e => setStudentForm({ ...studentForm, roll_number: e.target.value })} placeholder="e.g. 25371-CM-067" className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" required />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold">Phone Number</label>
-                  <input type="text" value={newStudent.phone} onChange={e => setNewStudent({ ...newStudent, phone: e.target.value })} placeholder="Phone (Optional)" className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" />
+                  <input type="text" value={studentForm.phone} onChange={e => setStudentForm({ ...studentForm, phone: e.target.value })} placeholder="Phone (Optional)" className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold">Academic Year</label>
-                  <select value={newStudent.academic_year} onChange={e => setNewStudent({ ...newStudent, academic_year: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" required>
+                  <select value={studentForm.academic_year} onChange={e => setStudentForm({ ...studentForm, academic_year: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" required>
                     <option value="1st Year">1st Year</option>
                     <option value="2nd Year">2nd Year</option>
                     <option value="3rd Year">3rd Year</option>
@@ -219,7 +247,7 @@ const Students = () => {
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold">Branch</label>
-                  <select value={newStudent.branch} onChange={e => setNewStudent({ ...newStudent, branch: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" required>
+                  <select value={studentForm.branch} onChange={e => setStudentForm({ ...studentForm, branch: e.target.value })} className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" required>
                     <option value="Computer Science">Computer Science</option>
                     <option value="Information Technology">Information Technology</option>
                     <option value="Electronics">Electronics</option>
@@ -228,7 +256,12 @@ const Students = () => {
                   </select>
                 </div>
               </div>
-              <div className="flex justify-end pt-2">
+              <div className="flex justify-end pt-2 gap-2">
+                {showForm === 'edit' && (
+                  <button type="button" onClick={() => setShowForm(false)} className="rounded-xl border bg-card px-6 py-2.5 text-sm font-semibold hover:bg-secondary transition-colors">
+                    Cancel
+                  </button>
+                )}
                 <button type="submit" disabled={formLoading} className="rounded-xl bg-primary px-6 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition-opacity disabled:opacity-60">
                   {formLoading ? "Saving..." : "Save Student"}
                 </button>
@@ -366,12 +399,32 @@ const Students = () => {
                             <button
                               onClick={() => setSelectedStudent(s)}
                               className="rounded-lg p-2 text-muted-foreground hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                              title="View Details"
                             >
                               <Eye className="h-4 w-4" />
                             </button>
-                            <button className="rounded-lg p-2 text-muted-foreground hover:text-amber-500 hover:bg-amber-50 transition-colors">
-                              <Pencil className="h-4 w-4" />
-                            </button>
+                            {canAddStudent && (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setStudentForm({ id: s.id, name: s.name, roll_number: s.roll_number, academic_year: s.academic_year, branch: s.branch || "", phone: s.phone || "" });
+                                    setShowForm('edit');
+                                    window.scrollTo({ top: 0, behavior: "smooth" });
+                                  }}
+                                  className="rounded-lg p-2 text-muted-foreground hover:text-amber-500 hover:bg-amber-50 transition-colors"
+                                  title="Edit Student"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </button>
+                                <button 
+                                  onClick={() => handleDelete(s.id)}
+                                  className="rounded-lg p-2 text-muted-foreground hover:text-red-500 hover:bg-red-50 transition-colors"
+                                  title="Delete Student"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </motion.tr>
