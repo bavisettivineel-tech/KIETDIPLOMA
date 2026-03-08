@@ -126,16 +126,33 @@ const Transport = () => {
     }
   };
 
-  // Group by route
-  const routeMap: Record<string, { students: any[]; fee: number }> = {};
-  registrations.forEach((r: any) => {
-    if (!routeMap[r.route_name]) routeMap[r.route_name] = { students: [], fee: Number(r.transport_fee) };
-    routeMap[r.route_name].students.push(r);
-  });
-  const routes = Object.entries(routeMap);
+  const getPaidAmount = (status: string, totalFee: number) => {
+    if (status === "Paid" || status === "Collected") return totalFee;
+    if (status === "Pending" || status === "active" || !status) return 0;
+    const num = Number(status);
+    return isNaN(num) ? 0 : num;
+  };
 
-  const totalStudents = registrations.length;
-  const totalRevenue = registrations.reduce((s: number, r: any) => s + Number(r.transport_fee), 0);
+  const [selectedYear, setSelectedYear] = useState("All");
+
+  const handleUpdatePaidAmount = async (id: string, newAmount: number, totalFee: number) => {
+    const finalStatus = newAmount >= totalFee ? "Paid" : newAmount.toString();
+    const { error } = await supabase.from("transport_registrations").update({ status: finalStatus }).eq("id", id);
+    if (error) { toast.error(error.message); }
+    else { toast.success("Payment amount updated"); qc.invalidateQueries({ queryKey: ["transport"] }); }
+  }
+
+  const years = ["All", ...Array.from(new Set(registrations.map((r: any) => r.students?.academic_year).filter(Boolean)))].sort();
+
+  const filteredRegistrations = selectedYear === "All"
+    ? registrations
+    : registrations.filter((r: any) => r.students?.academic_year === selectedYear);
+
+  const totalStudents = filteredRegistrations.length;
+  const totalRevenue = filteredRegistrations.reduce((s: number, r: any) => s + Number(r.transport_fee), 0);
+  const totalCollected = filteredRegistrations.reduce((s: number, r: any) => s + getPaidAmount(r.status, Number(r.transport_fee)), 0);
+  const totalPending = Math.max(0, totalRevenue - totalCollected);
+
   const getInitials = (name: string) => (name || "").split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase();
 
   return (
@@ -226,12 +243,24 @@ const Transport = () => {
             description="Transport registrations will appear here once management registers students for bus routes." />
         ) : (
           <>
+            {user?.role !== "student" && (
+              <div className="flex items-center gap-1.5 rounded-xl bg-secondary/50 p-1.5 border w-fit mb-4 flex-wrap">
+                {years.map(year => (
+                  <button key={year as string} onClick={() => setSelectedYear(year as string)}
+                    className={`rounded-lg px-4 py-2 text-xs font-medium transition-all ${selectedYear === year ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                    {year as string}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Summary */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
               {[
-                { label: "Total Routes", value: routes.length, icon: Bus, color: "text-blue-500", bg: "bg-blue-500/10" },
-                { label: "Students Enrolled", value: totalStudents, icon: Users, color: "text-emerald-500", bg: "bg-emerald-500/10" },
-                { label: "Total Revenue", value: `₹${(totalRevenue / 100000).toFixed(2)}L`, icon: IndianRupee, color: "text-amber-500", bg: "bg-amber-500/10" },
+                { label: "Students Enrolled", value: totalStudents, icon: Users, color: "text-blue-500", bg: "bg-blue-500/10" },
+                { label: "Total Revenue", value: `₹${(totalRevenue / 100000).toFixed(2)}L`, icon: IndianRupee, color: "text-purple-500", bg: "bg-purple-500/10" },
+                { label: "Collected", value: `₹${(totalCollected / 100000).toFixed(2)}L`, icon: IndianRupee, color: "text-emerald-500", bg: "bg-emerald-500/10" },
+                { label: "Pending", value: `₹${(totalPending / 100000).toFixed(2)}L`, icon: IndianRupee, color: "text-amber-500", bg: "bg-amber-500/10" }
               ].map((c, i) => (
                 <motion.div key={c.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}
                   className="rounded-2xl bg-card border p-5 shadow-card flex items-center gap-4">
@@ -246,63 +275,84 @@ const Transport = () => {
               ))}
             </div>
 
-            {/* Route Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              {routes.map(([routeName, info], i) => (
-                <motion.div key={routeName} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 + i * 0.08 }}
-                  className="rounded-2xl bg-card border p-6 shadow-card card-hover space-y-5">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="h-12 w-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
-                        <Bus className="h-6 w-6 text-blue-500" />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-bold">{routeName}</h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">Fee: ₹{info.fee.toLocaleString()}</p>
-                      </div>
-                    </div>
-                    <span className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-600">Active</span>
-                  </div>
-                  <div className="flex items-center gap-6">
-                    <div>
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Students</p>
-                      <p className="text-lg font-bold">{info.students.length}</p>
-                    </div>
-                    <div className="h-8 w-px bg-border" />
-                    <div>
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Fee/Year</p>
-                      <p className="text-lg font-bold">₹{info.fee.toLocaleString()}</p>
-                    </div>
-                  </div>
-                  {/* Pickup points */}
-                  <div>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium mb-2">Pickup Points</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {[...new Set(info.students.map((s: any) => s.pickup_point))].map((pt: any) => (
-                        <span key={pt} className="rounded-lg bg-secondary px-2.5 py-1 text-xs font-medium">{pt}</span>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Students list */}
-                  <div className="space-y-2">
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Registered Students</p>
-                    {info.students.slice(0, 5).map((s: any) => (
-                      <div key={s.id} className="flex items-center gap-2.5 p-2.5 rounded-xl bg-secondary/30">
-                        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-600">
-                          {getInitials(s.students?.name || "")}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold truncate">{s.students?.name || "—"}</p>
-                          <p className="text-[10px] text-muted-foreground">{s.pickup_point}</p>
-                        </div>
-                      </div>
-                    ))}
-                    {info.students.length > 5 && (
-                      <p className="text-xs text-muted-foreground text-center py-1">+{info.students.length - 5} more</p>
-                    )}
-                  </div>
-                </motion.div>
-              ))}
+            {/* List Format View */}
+            <div className="rounded-2xl border bg-card shadow-card overflow-hidden mt-6">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-secondary/30">
+                      <th className="text-left px-5 py-3.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Student</th>
+                      <th className="text-left px-5 py-3.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Roll No</th>
+                      <th className="text-left px-5 py-3.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Year</th>
+                      <th className="text-left px-5 py-3.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Route Info</th>
+                      <th className="text-right px-5 py-3.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Total Fee</th>
+                      <th className="text-right px-5 py-3.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Paid Amount</th>
+                      <th className="text-right px-5 py-3.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Balance</th>
+                      <th className="text-center px-5 py-3.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRegistrations.map((r: any, i: number) => {
+                      const student = r.students;
+                      const totalFee = Number(r.transport_fee) || 0;
+                      const paidAmount = getPaidAmount(r.status, totalFee);
+                      const balance = Math.max(0, totalFee - paidAmount);
+                      const isPaid = balance <= 0;
+                      return (
+                        <motion.tr key={r.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }} className="border-b last:border-0 hover:bg-secondary/20 transition-colors">
+                          <td className="px-5 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-[11px] font-bold text-slate-600">
+                                {getInitials(student?.name || "")}
+                              </div>
+                              <span className="font-semibold">{student?.name || "—"}</span>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4 font-mono text-xs text-muted-foreground">{student?.roll_number || "—"}</td>
+                          <td className="px-5 py-4 text-muted-foreground">{student?.academic_year || "—"}</td>
+                          <td className="px-5 py-4">
+                            <div className="flex flex-col">
+                              <span className="font-semibold text-[13px]">{r.route_name}</span>
+                              <span className="text-xs text-muted-foreground mt-0.5">{r.pickup_point}</span>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4 text-right font-medium">₹{totalFee.toLocaleString()}</td>
+                          <td className="px-5 py-4 text-right">
+                            {user?.role === "student" ? (
+                              <span className="font-medium text-emerald-600">₹{paidAmount.toLocaleString()}</span>
+                            ) : (
+                              <div className="flex items-center justify-end gap-1">
+                                <span className="text-muted-foreground text-xs">₹</span>
+                                <input
+                                  type="number"
+                                  defaultValue={paidAmount}
+                                  onBlur={(e) => {
+                                    const val = Number(e.target.value);
+                                    if (val !== paidAmount && val >= 0) {
+                                      handleUpdatePaidAmount(r.id, val, totalFee);
+                                    }
+                                  }}
+                                  className="w-20 rounded-lg border-2 border-border bg-card px-2 py-1.5 text-xs font-bold text-emerald-600 outline-none focus:border-primary/50 text-right transition-colors"
+                                />
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-5 py-4 text-right">
+                            <span className={`font-bold ${balance > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                              ₹{balance.toLocaleString()}
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 text-center">
+                            <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wider ${isPaid ? "bg-emerald-500/10 text-emerald-600" : "bg-amber-500/10 text-amber-600"}`}>
+                              {isPaid ? "Paid" : "Pending"}
+                            </span>
+                          </td>
+                        </motion.tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </>
         )}

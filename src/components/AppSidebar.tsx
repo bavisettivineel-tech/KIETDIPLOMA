@@ -60,6 +60,10 @@ export function AppSidebar() {
     );
   }
 
+  if (user?.role === "management") {
+    navItems = navItems.filter(item => item.title !== "Attendance");
+  }
+
   return (
     <Sidebar collapsible="icon" className="border-r-0">
       <SidebarHeader className="p-4 pb-6">

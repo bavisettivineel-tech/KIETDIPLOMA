@@ -1,18 +1,93 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { BookOpen, Save, Download } from "lucide-react";
+import { BookOpen, Save, Download, Plus } from "lucide-react";
 import { useInternalMarks, useAssignmentMarks } from "@/hooks/useSupabaseData";
 import { EmptyState, LoadingState } from "@/components/EmptyState";
+import { useAuth } from "@/contexts/AuthContext";
+import { useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 const Marks = () => {
   const [tab, setTab] = useState<"internal" | "assignment">("internal");
   const { data: internalMarks = [], isLoading: loadingInternal } = useInternalMarks();
   const { data: assignmentMarks = [], isLoading: loadingAssignment } = useAssignmentMarks();
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const canAddMarks = user && user.role !== "student";
+  const [showForm, setShowForm] = useState(false);
+  const [formLoading, setFormLoading] = useState(false);
+  const [markForm, setMarkForm] = useState({ roll_number: "", subject: "", mark1: "", mark2: "", mark3: "" });
+
+  const handleAddMarks = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canAddMarks) return;
+    setFormLoading(true);
+
+    const { data: student, error: stuError } = await supabase
+      .from("students")
+      .select("id")
+      .eq("roll_number", markForm.roll_number.trim())
+      .single();
+
+    if (stuError || !student) {
+      toast.error("Student with this roll number not found.");
+      setFormLoading(false);
+      return;
+    }
+
+    const m1 = markForm.mark1 ? Number(markForm.mark1) : null;
+    const m2 = markForm.mark2 ? Number(markForm.mark2) : null;
+    const m3 = markForm.mark3 ? Number(markForm.mark3) : null;
+
+    if (tab === "internal") {
+      const { error } = await supabase.from("internal_marks").insert({
+        student_id: student.id,
+        subject: markForm.subject,
+        mid1: m1,
+        mid2: m2,
+        mid3: m3
+      });
+      if (error) {
+        toast.error(error.message);
+      } else {
+        toast.success("Internal marks added.");
+        setShowForm(false);
+        setMarkForm({ roll_number: "", subject: "", mark1: "", mark2: "", mark3: "" });
+        qc.invalidateQueries({ queryKey: ["internal_marks"] });
+      }
+    } else {
+      const { error } = await supabase.from("assignment_marks").insert({
+        student_id: student.id,
+        subject: markForm.subject,
+        assignment1: m1,
+        assignment2: m2,
+        assignment3: m3
+      });
+      if (error) {
+        toast.error(error.message);
+      } else {
+        toast.success("Assignment marks added.");
+        setShowForm(false);
+        setMarkForm({ roll_number: "", subject: "", mark1: "", mark2: "", mark3: "" });
+        qc.invalidateQueries({ queryKey: ["assignment_marks"] });
+      }
+    }
+    setFormLoading(false);
+  };
 
   const isLoading = tab === "internal" ? loadingInternal : loadingAssignment;
   const data = tab === "internal" ? internalMarks : assignmentMarks;
   const hasData = data.length > 0;
+
+  const [selectedYear, setSelectedYear] = useState("All");
+
+  const years = ["All", ...Array.from(new Set(data.map((d: any) => d.students?.academic_year).filter(Boolean)))].sort();
+
+  const filteredData = selectedYear === "All"
+    ? data
+    : data.filter((d: any) => d.students?.academic_year === selectedYear);
 
   const getInitials = (name: string) => (name || "").split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase();
 
@@ -44,8 +119,52 @@ const Marks = () => {
             }} className="flex items-center gap-2 rounded-xl border bg-card px-4 py-2.5 text-sm font-medium hover:bg-secondary transition-colors shadow-sm">
               <Download className="h-4 w-4" /> Export
             </button>
+            {canAddMarks && (
+              <button
+                onClick={() => setShowForm(!showForm)}
+                className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90 transition-opacity shadow-sm shadow-red-500/20"
+              >
+                <Plus className="h-4 w-4" /> {showForm ? "Cancel" : "Add Marks"}
+              </button>
+            )}
           </div>
         </div>
+
+        {/* Add Marks Form */}
+        {showForm && (
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl bg-card border p-6 shadow-card">
+            <h3 className="text-sm font-semibold mb-4">Add {tab === "internal" ? "Internal" : "Assignment"} Marks</h3>
+            <form onSubmit={handleAddMarks} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">Student Roll Number</label>
+                  <input type="text" value={markForm.roll_number} onChange={e => setMarkForm({ ...markForm, roll_number: e.target.value })} placeholder="e.g. 25371-CM-067" className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" required />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">Subject</label>
+                  <input type="text" value={markForm.subject} onChange={e => setMarkForm({ ...markForm, subject: e.target.value })} placeholder="e.g. Mathematics" className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" required />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">{tab === "internal" ? "Mid 1" : "Assignment 1"}</label>
+                  <input type="number" value={markForm.mark1} onChange={e => setMarkForm({ ...markForm, mark1: e.target.value })} placeholder="Max 25" className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">{tab === "internal" ? "Mid 2" : "Assignment 2"}</label>
+                  <input type="number" value={markForm.mark2} onChange={e => setMarkForm({ ...markForm, mark2: e.target.value })} placeholder="Max 25" className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">{tab === "internal" ? "Mid 3" : "Assignment 3"}</label>
+                  <input type="number" value={markForm.mark3} onChange={e => setMarkForm({ ...markForm, mark3: e.target.value })} placeholder="Max 25" className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20" />
+                </div>
+              </div>
+              <div className="flex justify-end pt-2">
+                <button type="submit" disabled={formLoading} className="rounded-xl bg-primary px-6 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition-opacity disabled:opacity-60">
+                  {formLoading ? "Processing..." : "Save Marks"}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        )}
 
         {/* Tabs */}
         <div className="flex items-center gap-1.5 rounded-xl bg-secondary/50 p-1.5 w-fit border">
@@ -63,6 +182,17 @@ const Marks = () => {
         ) : (
           <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
             className="rounded-2xl border bg-card shadow-card overflow-hidden">
+
+            <div className="flex items-center gap-1.5 bg-secondary/30 p-4 border-b flex-wrap">
+              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider mr-2">Academic Year</span>
+              {years.map(year => (
+                <button key={year as string} onClick={() => setSelectedYear(year as string)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${selectedYear === year ? "bg-card shadow-sm text-foreground border border-border" : "text-muted-foreground hover:text-foreground border border-transparent"}`}>
+                  {year as string}
+                </button>
+              ))}
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -88,7 +218,7 @@ const Marks = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.map((row: any, i: number) => {
+                  {filteredData.map((row: any, i: number) => {
                     const student = row.students;
                     const total = tab === "internal"
                       ? (row.average ?? 0)
